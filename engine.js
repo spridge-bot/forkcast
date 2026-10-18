@@ -29,6 +29,8 @@ function fit(r, p) {
   let s = 1;
   // what you've liked before: favourites and 4–5 stars come round more often, 2 stars less
   if ((p.favourites || []).includes(r.id)) s += 1.3;
+  // eaten in the last couple of weeks: give it a rest (favourites come back sooner)
+  if ((p.recent || []).includes(r.id)) s -= (p.favourites || []).includes(r.id) ? 1.2 : 2.6;
   if (stars) s += ({ 2: -.9, 3: 0, 4: .7, 5: 1.3 })[stars] || 0;
   if ((p.cuisines || {})[r.cuisine] === LOVE) s += 1.2;
   if ((p.proteins || {})[r.protein] === LOVE) s += 1;
