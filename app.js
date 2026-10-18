@@ -24,7 +24,7 @@ async function localApi(path, body) {
       const px = PRICES[r.id] || (PRICES[r.id] = await getJSON(`data/prices/${r.id}.json`).catch(() => ({ items: {} })));
       const results = {}; for (const l of todo) results[l.item] = px.items[l.item] || [];
       job.retailers[r.id] = { id: r.id, name: r.name, inStoreOnly: r.inStoreOnly, canFill: r.canFill, trolleyUrl: r.trolleyUrl, fillStatus: r.fillStatus,
-        pricedAt: px.at, done: todo.length, state: "done", ...E.basket(body.list, results, C.ingredients, body.prefs) };
+        pricedAt: px.at, done: todo.length, state: "done", ...E.basket(body.list, results, C.ingredients, body.prefs, k => px.items[k]) };
     }));
     return (LOCALJOBS[job.id] = job);
   }
@@ -364,29 +364,68 @@ function shop() {
     + `<p class="small dim">Totals count whole packs. Items a shop doesn't stock are estimated from the other shops so the comparison is fair.</p>`
     + nextBar(S.pick ? `Ordering from <b>${esc(J.retailers[S.pick]?.name || "")}</b>` : "Pick a shop above", "Recipes", "go(3)");
 }
-// Price heatmap: shops down the side (in ranked order), list items across, each cell what that item
-// costs at that shop (whole packs). Shading is per item, cheapest to dearest, in one hue, so you can
-// see where the money goes; the items with the widest spread come first. Hover or tap for details.
+// Price heatmap: shops down the side (in ranked order), list items across. Each cell is the shop's
+// UNIT price for that item (per 100 g, per litre, or per item), so a 1 kg bag and a 500 g bag compare
+// fairly. Shading is per item, cheapest to dearest unit price, in one hue; the items where shops
+// differ most (in proportion) come first. Hover or tap a cell for the pack and what you'd pay.
+const UNIT = { g: { per: 100, label: "per 100g" }, ml: { per: 1000, label: "per litre" }, each: { per: 1, label: "each" } };
+// Unit price for an item: the shop's own published unit price when it makes sense, else worked out
+// from the pack size. Shops publish per kg, per litre, per 100g/10g or per item, and some give pence
+// where others give pounds; the reading that implies a believable pack size wins.
+function unitPrice(l) {
+  const cat = C.ingredients[l.item] || {}, u = UNIT[l.unit] || UNIT.g, price = l.product.price;
+  const y = E.packYield({ size: l.product.size, name: l.product.name }, { unit: l.unit, item: l.item }, cat);
+  const fromPack = y ? (price / y) * u.per : null;
+  const shop = shopUnit(l.product, cat, l.unit, price);
+  if (shop == null) return fromPack;
+  if (fromPack == null) return shop;
+  // both known: trust the shop unless it's wildly off what the pack says (a mislabelled listing)
+  return shop / fromPack > 2.5 || fromPack / shop > 2.5 ? fromPack : shop;
+}
+function shopUnit(prod, cat, unit, price) {
+  const v = +prod.unitPrice, lab = String(prod.unitLabel || "").toLowerCase();
+  if (!(v > 0) || !price) return null;
+  // what one "label unit" is, in grams / ml / items
+  let base = null, kind = null;
+  if (/dr\.?wt/.test(lab)) return null;                                  // drained weight: not comparable
+  if (/^(kg|kilo)/.test(lab)) { base = 1000; kind = "g"; }
+  else if (/^100\s*g|per 100 gram/.test(lab)) { base = 100; kind = "g"; }
+  else if (/^10\s*g/.test(lab)) { base = 10; kind = "g"; }
+  else if (/^(l|ltr|litre|liter)\b/.test(lab)) { base = 1000; kind = "ml"; }
+  else if (/^100\s*ml/.test(lab)) { base = 100; kind = "ml"; }
+  else if (/^(each|ea|unit|u)$/.test(lab)) { base = 1; kind = "each"; }
+  else return null;
+  // pounds or pence? the one that implies a believable pack size
+  const sane = (pp) => { const q = price / pp * base; return kind === "each" ? q >= .9 && q <= 60 : q >= 5 && q <= 12000; };
+  const per = sane(v) ? v : sane(v / 100) ? v / 100 : null;
+  if (per == null) return null;
+  // convert to the ingredient's own unit: per 100 g, per litre, or per item
+  const each = cat.eachWeight || 150;
+  if (unit === "g") return kind === "g" ? per / base * 100 : kind === "ml" ? per / base * 100 : null;
+  if (unit === "ml") return kind === "ml" ? per / base * 1000 : kind === "g" ? per / base * 1000 : null;
+  if (unit === "each") return kind === "each" ? per : kind === "g" ? per / base * each : null;
+  return null;
+}
 function heatmap(ranked, V) {
   const items = (S.list || []).filter(l => !l.skip);
   const cols = items.map(it => {
-    const cells = ranked.map(r => V[r.id].lines.find(l => l.item === it.item)).map(l => l && !l.missing ? l : null);
-    const vals = cells.filter(Boolean).map(l => l.cost);
+    const cells = ranked.map(r => V[r.id].lines.find(l => l.item === it.item)).map(l => l && !l.missing ? { l, up: unitPrice(l) } : null).map(c => c && c.up ? c : null);
+    const vals = cells.filter(Boolean).map(c => c.up);
     const lo = Math.min(...vals), hi = Math.max(...vals);
-    return { it, cells, lo, hi, spread: vals.length > 1 ? hi - lo : 0 };
-  }).filter(c => c.cells.some(Boolean)).sort((a, b) => b.spread - a.spread);
-  const shade = (v, c) => c.hi > c.lo ? (v - c.lo) / (c.hi - c.lo) : 0;
-  const cell = (l, c, r) => {
-    if (!l) return `<td class="hm-x" title="${esc(r.name)}: not stocked">–</td>`;
-    const t = shade(l.cost, c), pct = Math.round(8 + t * 72);
-    const tip = `${r.name}: ${l.packs} × ${l.product.name}${l.product.size ? " (" + l.product.size + ")" : ""} = ${money(l.cost)}`;
-    return `<td class="hm-c ${t > .6 ? "dark" : ""} ${l.cost === c.lo ? "low" : ""}" style="--p:${pct}%" tabindex="0" data-tip="${esc(tip)}">${l.cost < 10 ? l.cost.toFixed(2) : Math.round(l.cost)}</td>`;
+    return { it, cells, lo, hi, ratio: vals.length > 1 && lo > 0 ? hi / lo : 1, unit: (UNIT[it.unit] || UNIT.g).label };
+  }).filter(c => c.cells.some(Boolean)).sort((a, b) => b.ratio - a.ratio);
+  const fmtU = v => v >= 10 ? "£" + v.toFixed(0) : v >= 1 ? "£" + v.toFixed(2) : Math.round(v * 100) + "p";
+  const cell = (c, col, r) => {
+    if (!c) return `<td class="hm-x" title="${esc(r.name)}: not stocked">–</td>`;
+    const t = col.hi > col.lo ? Math.log(c.up / col.lo) / Math.log(col.hi / col.lo) : 0, pct = Math.round(8 + t * 72);
+    const l = c.l, tip = `${r.name}: ${l.product.name}${l.product.size ? " (" + l.product.size + ")" : ""}, ${money(l.product.price)} a pack = ${fmtU(c.up)} ${col.unit}. You'd buy ${l.packs} for ${money(l.cost)}.`;
+    return `<td class="hm-c ${t > .6 ? "dark" : ""} ${c.up === col.lo ? "low" : ""}" style="--p:${pct}%" tabindex="0" data-tip="${esc(tip)}">${fmtU(c.up)}</td>`;
   };
-  const table = `<div class="hm-wrap" role="region" aria-label="Price of each item at each supermarket" tabindex="0"><table class="hm">
-    <thead><tr><th scope="col" class="hm-shop">Shop</th>${cols.map(c => `<th scope="col"><span>${esc(c.it.name)}</span></th>`).join("")}</tr></thead>
+  const table = `<div class="hm-wrap" role="region" aria-label="Unit price of each item at each supermarket" tabindex="0"><table class="hm">
+    <thead><tr><th scope="col" class="hm-shop">Shop</th>${cols.map(c => `<th scope="col"><span>${esc(c.it.name)} <em>${c.unit}</em></span></th>`).join("")}</tr></thead>
     <tbody>${ranked.map((r, i) => `<tr><th scope="row" class="hm-shop">${esc(r.name)}</th>${cols.map(c => cell(c.cells[i], c, r)).join("")}</tr>`).join("")}</tbody></table></div>`;
   return panel("Price heatmap", `${cols.length} items × ${ranked.length} shops`,
-    `<p class="help">Each column is one item on your list, priced for the packs you'd buy. Darker means dearer than the other shops for that item; underlined is the cheapest. Biggest price gaps on the left.</p>
+    `<p class="help">Unit prices, so pack sizes compare fairly: per 100g, per litre, or per item. Darker means dearer than the other shops for that item; underlined is the cheapest. The biggest gaps between shops are on the left.</p>
      <div class="hm-legend"><span>cheapest</span><i></i><span>dearest</span><span class="hm-x-key">– not stocked</span></div>${table}<div class="hm-tip" id="hm-tip" role="status"></div>`);
 }
 // tooltip for the heatmap (hover on a computer, tap on a phone)
@@ -407,7 +446,7 @@ function shopLink(r, buy) {
 }
 function orderPanel(r, v) {
   const buy = v.lines.filter(l => !l.missing), link = shopLink(r, buy);
-  const products = buy.map(l => `<div class="pl"><span><a href="${esc(l.product.url || "#")}" target="_blank" rel="noopener">${l.packs} × ${esc(l.product.name)}</a> <span class="small dim">${esc(l.product.size || "")}</span><br><span class="tier ${l.product.tier}">${l.product.tier}</span> <span class="small dim">for ${fmtQty(l.qty, l.unit)} ${esc(l.name.toLowerCase())}${l.product.promo ? ` · ${esc(l.product.promo)}` : ""}</span></span><span class="pc">${money(l.cost)}</span>
+  const products = buy.map(l => `<div class="pl"><span><a href="${esc(l.product.url || "#")}" target="_blank" rel="noopener">${l.packs} × ${esc(l.product.name)}</a> <span class="small dim">${esc(l.product.size || "")}</span><br><span class="tier ${l.product.tier}">${l.product.tier}</span> ${l.sub ? `<span class="badge q">swap</span> ` : ""}<span class="small dim">${l.sub ? `${esc(l.sub)} instead of ` : "for "}${fmtQty(l.qty, l.unit)} ${esc(l.name.toLowerCase())}${l.product.promo ? ` · ${esc(l.product.promo)}` : ""}</span></span><span class="pc">${money(l.cost)}</span>
       ${l.alts?.length ? `<span class="alts">${l.alts.slice(0, 3).map((a, k) => `<button class="tiny" aria-pressed="${l.swapped === k}" onclick="swapLine('${r.id}','${esc(l.item)}',${k})" title="${esc(a.product.name)}">${esc(short(a.product.name))} ${money(a.cost)}</button>`).join("")}${l.swapped != null ? `<button class="tiny" onclick="swapLine('${r.id}','${esc(l.item)}',null)">Undo</button>` : ""}</span>` : ""}</div>`).join("")
     + v.lines.filter(l => l.missing).map(l => `<div class="pl"><span class="miss">${esc(l.name)} (${fmtQty(l.qty, l.unit)}): not stocked here</span><span></span></div>`).join("");
   let h = `<div class="order">`;

@@ -153,6 +153,11 @@ const eachGrams = item => { for (const k of Object.keys(EACH_G).sort((a, b) => b
 // "4 x 400g" → {qty: 1600, unit: "g", count: 4}; "1.5kg" → 1500 g; "2 pints" → 1136 ml; "6 pack" → 6 each
 function parseSize(size, name, want) {
   const t = `${size || ""} ${name || ""}`.toLowerCase().replace(/,/g, "");
+  if (/\bper kg\b|\bprice per kg\b/.test(String(size || "").toLowerCase())) return { qty: 1000, unit: "g", count: 1, perKg: true };   // loose, sold by weight
+  let c = String(size || "").toLowerCase().match(/^(\d+)\s*(each|ea|pk|pack)$/);                       // Aldi "8Each"
+  if (c) return { qty: +c[1], unit: "each", count: +c[1] };
+  c = String(name || "").toLowerCase().match(/\b(\d{1,2})\s+(?:[a-z&'-]+\s+){0,4}(eggs|rolls|buns|wraps|tortillas|bagels|muffins|crumpets|flatbreads|naans?|pittas?|limes|lemons|peppers|onions|avocados|fillets|breasts|thighs|sausages|burgers|cobs|baps)\b/);
+  if (c && !/\d\s*(g|kg|ml|l)\b/.test(String(size || "").toLowerCase())) return { qty: +c[1], unit: "each", count: +c[1] };
   let m = t.match(/(\d+)\s*[x×]\s*(\d+(?:\.\d+)?)\s*(kg|g|ml|l|cl)\b/);
   if (m) return { qty: +m[1] * conv(+m[2], m[3]), unit: /g$/.test(m[3]) ? "g" : "ml", count: +m[1] };
   m = t.match(/(\d+(?:\.\d+)?)\s*(kg|g|ml|ltr|litre|l|cl)\b/);
@@ -178,7 +183,7 @@ function packYield(prod, ing, cat = {}) {
   if (ing.unit === "each" && s.unit === "each" && s.count === 1 && !/\d/.test(prod.size || "") && (cat.typicalPack || 1) > 1 && (cat.eachWeight || 999) < 40) return cat.typicalPack;
   if (s.unit === ing.unit) return s.qty;
   if (ing.unit === "each" && s.unit === "g") return Math.max(1, Math.round(s.qty / each));
-  if (ing.unit === "g" && s.unit === "each") return s.qty * each;
+  if (ing.unit === "g" && s.unit === "each") return s.qty * (cat.eachWeight || (s.count === 1 && cat.typicalPack > 150 ? cat.typicalPack : each));
   if (ing.unit === "g" && s.unit === "ml") return s.qty;                         // close enough for sauces, yoghurt
   if (ing.unit === "ml" && s.unit === "g") return s.qty;
   return null;
@@ -269,12 +274,16 @@ function chooseLine(line, results, cat, p) {
   for (const prod of results || []) {
     if (prod.inStock === false || !(prod.price > 0)) continue;
     const rel = relevant(prod, line, cat, p); if (rel < .5) continue;
-    const y = packYield(prod, line, cat); if (!y) continue;
-    const packs = Math.max(1, Math.ceil(line.qty / y - .08));                    // 8% grace: 410 g from a 400 g pack is fine
+    const sz = parseSize(prod.size, prod.name, line.unit);
+    // the shop sells it but doesn't say how big: one pack (the smallest sensible) covers the recipes
+    const y = packYield(prod, line, cat) || Math.max(line.qty, cat.typicalPack || 0);
     const price = loyal && prod.loyaltyPrice > 0 ? prod.loyaltyPrice : prod.price;
-    const cost = packs * price, q = quality(prod, cat);
+    let packs, cost;
+    if (sz && sz.perKg && line.unit === "g") { packs = 1; cost = price * Math.max(line.qty, 100) / 1000; }   // loose: weighed out
+    else { packs = Math.max(1, Math.ceil(line.qty / y - .08)); cost = packs * price; }                     // 8% grace: 410 g from a 400 g pack is fine
+    const q = quality(prod, cat);
     // leftover fresh food is money in the bin; leftover rice isn't
-    const spare = Math.max(0, packs * y - line.qty) / (packs * y);
+    const spare = sz && sz.perKg ? 0 : Math.max(0, packs * y - line.qty) / (packs * y);
     const waste = cat.perishable ? cost * spare * .5 : cost * spare * .05;
     cands.push({ prod, packs, price, cost, q, rel, waste, s: style.score(cost + waste, q, prod) * (rel < 1 ? 1.6 : 1) });   // a weaker match only wins when nothing better exists
   }
@@ -283,16 +292,25 @@ function chooseLine(line, results, cat, p) {
 }
 
 // Price the whole list at one retailer. results: { [item]: searchResults }
-function basket(list, results, ingredients, p) {
+// more(item): search results for an ingredient that isn't on the list (used for substitutes)
+function basket(list, results, ingredients, p, more = () => null) {
   const lines = [];
   let total = 0, qsum = 0, n = 0, missing = 0, waste = 0;
   for (const l of list) {
     if (l.skip) continue;
     const cat = ingredients[l.item] || { name: l.name, aisle: l.aisle };
-    const { best, alts } = chooseLine(l, results[l.item], cat, p);
+    let { best, alts } = chooseLine(l, results[l.item], cat, p), sub = null;
+    // not stocked: what a shopper would do, take the nearest substitute this shop does sell
+    if (!best) for (const k of cat.substitutes || []) {
+      const sc = ingredients[k]; if (!sc || sc.unit !== l.unit) continue;
+      if ((sc.animal || "") !== (cat.animal || "") || (cat.vegan && !sc.vegan) || (cat.vegetarian && !sc.vegetarian)) continue;   // never swap meat for veg or the like
+      if (["meat", "fish"].includes(cat.animal) && k.split("-")[0] !== l.item.split("-")[0]) continue;                           // beef stays beef, cod stays cod
+      const r = chooseLine({ ...l, item: k }, results[k] || more(k), sc, p);
+      if (r.best) { ({ best, alts } = r); sub = sc.name; break; }
+    }
     if (!best) { missing++; lines.push({ item: l.item, name: l.name, qty: l.qty, unit: l.unit, missing: true }); continue; }
     total += best.cost; qsum += best.q; n++; waste += best.waste;
-    lines.push({ item: l.item, name: l.name, qty: l.qty, unit: l.unit, packs: best.packs, cost: +best.cost.toFixed(2), q: +best.q.toFixed(2),
+    lines.push({ item: l.item, name: l.name, qty: l.qty, unit: l.unit, sub, packs: best.packs, cost: +best.cost.toFixed(2), q: +best.q.toFixed(2),
       product: pickFields(best.prod, best.price), alts: alts.map(a => ({ packs: a.packs, cost: +a.cost.toFixed(2), q: +a.q.toFixed(2), product: pickFields(a.prod, a.price) })) });
   }
   return { total: +total.toFixed(2), quality: n ? +(qsum / n).toFixed(2) : 0, matched: n, missing, waste: +waste.toFixed(2), lines };

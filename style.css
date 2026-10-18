@@ -323,3 +323,6 @@ button.link{white-space:normal;text-align:left}
 @media (min-width:1600px){
   .recipes{grid-template-columns:repeat(3,minmax(0,1fr))}
 }
+
+.hm thead th span em{font-style:normal;color:var(--ink-4);font-size:10px}
+.hm-c{font-size:11.5px}
