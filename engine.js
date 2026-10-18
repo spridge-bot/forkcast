@@ -214,7 +214,8 @@ function relevant(prod, ing, cat, p = {}) {
     let m = cache.get(cat.match);
     if (!m) cache.set(cat.match, m = Object.fromEntries(["all", "any", "none"].map(k => [k, (cat.match[k] || []).map(r => new RegExp(r, "i"))])));
     if (!m.all.every(r => r.test(n)) || (m.any.length && !m.any.some(r => r.test(n))) || m.none.some(r => r.test(n))) return 0;
-    if (FREEFROM.test(n) && !FREEFROM.test(about) && !needFree) return 0;
+    // free-from lines cost more: only picked when nothing ordinary matches (some shops' only bagels are gluten-free)
+    if (FREEFROM.test(n) && !FREEFROM.test(about) && !needFree) return .5;
     if (needFree && !FREEFROM.test(n) && !/\b(gf|free)\b/.test(n)) return .4;        // shown only if nothing free-from exists
     return 1;
   }
@@ -269,7 +270,7 @@ function chooseLine(line, results, cat, p) {
     // leftover fresh food is money in the bin; leftover rice isn't
     const spare = Math.max(0, packs * y - line.qty) / (packs * y);
     const waste = cat.perishable ? cost * spare * .5 : cost * spare * .05;
-    cands.push({ prod, packs, price, cost, q, rel, waste, s: style.score(cost + waste, q, prod) * (1.15 - .15 * rel) });
+    cands.push({ prod, packs, price, cost, q, rel, waste, s: style.score(cost + waste, q, prod) * (rel < 1 ? 1.6 : 1) });   // a weaker match only wins when nothing better exists
   }
   cands.sort((a, b) => a.s - b.s);
   return { best: cands[0] || null, alts: cands.slice(1, 6) };
