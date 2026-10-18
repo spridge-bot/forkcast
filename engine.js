@@ -183,13 +183,49 @@ const words = s => String(s).toLowerCase().replace(/[^a-z ]/g, " ").split(/\s+/)
 // Things a search drags in that are never the raw ingredient
 const JUNK = /\b(crisps?|flavou?r(ed)?|dog|cat|baby|toddler|kids?\b|sweets?|ready meal|meal kit|sandwich|wrap(s)? filled|seasoning mix|pot noodle|smoothie)\b/i;
 
-function relevant(prod, ing, cat) {
-  const n = prod.name.toLowerCase();
-  if (JUNK.test(n) && !JUNK.test(cat.name)) return 0;
+// Product types that mean "this is a different thing" unless the ingredient itself is one of them:
+// "sesame seeds" must not match sesame seed buns, "chicken breast" must not match chicken soup.
+const KINDS = ["bun", "buns", "bread", "loaf", "wrap", "wraps", "crisps", "bar", "bars", "biscuit", "biscuits", "cake", "cakes", "cookies",
+  "sauce", "soup", "pie", "pies", "pizza", "sandwich", "kit", "dip", "crackers", "cereal", "oil", "paste", "stock", "gravy", "drink", "juice",
+  "yoghurt", "yogurt", "cheese", "milk", "ice", "cream", "dressing", "mayonnaise", "seasoning", "marinade", "spread", "butter", "jam",
+  "pudding", "dessert", "noodles", "pasta", "rice", "burger", "burgers", "sausages", "nuggets", "goujons", "kiev", "meal", "pot", "pots",
+  "microwave", "microwaveable", "pouch", "instant", "tea", "coffee", "smoothie", "shot", "chocolate", "flavoured", "vinegar", "uht",
+  "farfalle", "penne", "fusilli", "spaghetti", "tagliatelle", "linguine", "lasagne", "ravioli", "tortellini", "gnocchi", "macaroni", "risotto"];
+// Describing words: nice to match, but the food word itself (beef, onions, rice, bagels) must be there
+const MODIFIERS = new Set(["baby", "free", "range", "red", "brown", "white", "green", "yellow", "plain", "smoked", "roasted", "unsalted",
+  "salted", "mature", "extra", "toasted", "flat", "long", "grain", "natural", "greek", "style", "whole", "boneless", "skinless", "raw",
+  "cooked", "chopped", "dried", "ground", "light", "dark", "sweet", "hot", "mild", "stir", "fry", "strips", "fillets", "fillet", "diced",
+  "sliced", "grated", "organic", "frozen", "chilled", "lean", "thick", "thin", "cut", "pieces", "chunks", "in", "juice", "water", "tin",
+  "rolled", "fine", "coarse", "garden", "bunched", "loose", "pack", "mini", "king", "jumbo", "medium", "streaky", "back", "unsmoked",
+  "skimmed", "semi", "full", "fat", "reduced", "low", "british", "italian", "english", "classic", "original", "fresh"]);
+// free-from lines cost more and only make sense when someone needs them
+const FREEFROM = /\b(gluten[ -]free|dairy[ -]free|free from|lactose[ -]free|wheat[ -]free)\b/i;
+const wordIn = (w, text) => new RegExp(`\\b${w.replace(/(es|s)$/, "")}(s|es)?\\b`).test(text);
+
+function relevant(prod, ing, cat, p = {}) {
+  const n = prod.name.toLowerCase(), about = `${cat.name} ${cat.search || ""}`.toLowerCase();
+  if (JUNK.test(n) && !JUNK.test(about)) return 0;
+  const needFree = (p.mustBe || []).some(m => (m === "gluten-free" && (cat.allergens || []).includes("gluten")) || (m === "dairy-free" && (cat.allergens || []).includes("dairy")));
+  if (cat.match) {
+    // Hand-written rules in the catalogue: every "all" regex, at least one "any", no "none" must match the product name.
+    const cache = relevant.re || (relevant.re = new WeakMap());
+    let m = cache.get(cat.match);
+    if (!m) cache.set(cat.match, m = Object.fromEntries(["all", "any", "none"].map(k => [k, (cat.match[k] || []).map(r => new RegExp(r, "i"))])));
+    if (!m.all.every(r => r.test(n)) || (m.any.length && !m.any.some(r => r.test(n))) || m.none.some(r => r.test(n))) return 0;
+    if (FREEFROM.test(n) && !FREEFROM.test(about) && !needFree) return 0;
+    if (needFree && !FREEFROM.test(n) && !/\b(gf|free)\b/.test(n)) return .4;        // shown only if nothing free-from exists
+    return 1;
+  }
+  for (const k of KINDS) if (wordIn(k, n) && !wordIn(k, about)) return 0;
+  if (FREEFROM.test(n) && !FREEFROM.test(about) && !needFree) return 0;
+  if (needFree && !FREEFROM.test(n) && !/\b(gf|free)\b/.test(n)) return .4;          // shown only if nothing free-from exists
+  if (cat.aisle === "frozen" && /\b(in water|tinned|tin|can)\b/.test(n)) return 0;
   const key = words(cat.name);
   if (!key.length) return 1;
-  const hits = key.filter(w => n.includes(w) || n.includes(w.replace(/s$/, ""))).length;
-  return hits / key.length;
+  if (key.filter(w => !MODIFIERS.has(w)).some(w => !wordIn(w, n))) return 0;   // the food itself is missing
+  if (key.includes("semi") && !/semi/.test(n)) return 0;                       // semi-skimmed isn't skimmed
+  const hits = key.filter(w => wordIn(w, n)).length;
+  return Math.max(.5, hits / key.length);
 }
 
 // Quality of a product for this ingredient: tier, welfare and provenance words, and whether a named
@@ -223,7 +259,7 @@ function chooseLine(line, results, cat, p) {
   const cands = [];
   for (const prod of results || []) {
     if (prod.inStock === false || !(prod.price > 0)) continue;
-    const rel = relevant(prod, line, cat); if (rel < .5) continue;
+    const rel = relevant(prod, line, cat, p); if (rel < .5) continue;
     const y = packYield(prod, line, cat); if (!y) continue;
     const packs = Math.max(1, Math.ceil(line.qty / y - .08));                    // 8% grace: 410 g from a 400 g pack is fine
     const price = loyal && prod.loyaltyPrice > 0 ? prod.loyaltyPrice : prod.price;
