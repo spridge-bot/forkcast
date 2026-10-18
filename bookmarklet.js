@@ -1,4 +1,8 @@
 (() => {
+// some shops' sites break on a # link, so Forkcast sends ?forkcast= there; move it to the # for the fill
+(function () { const m = /[?&](forkcast|plates)=([^&]*)/.exec(location.search);
+  if (m && !new RegExp("[#&]" + m[1] + "=").test(location.hash)) history.replaceState(null, "", location.pathname + (location.search.replace(m[0], "").replace(/^&/, "?") || "") + "#" + m[1] + "=" + m[2]); })();
+
 const F = {
 "ocado.com": () => {
 // Runs ON ocado.com, in whatever browser you're using (bookmarklet). Replaces that browser's Ocado

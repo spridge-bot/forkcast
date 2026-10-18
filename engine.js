@@ -204,7 +204,9 @@ const wordIn = (w, text) => new RegExp(`\\b${w.replace(/(es|s)$/, "")}(s|es)?\\b
 
 function relevant(prod, ing, cat, p = {}) {
   const n = prod.name.toLowerCase(), about = `${cat.name} ${cat.search || ""}`.toLowerCase();
-  if (JUNK.test(n) && !JUNK.test(about)) return 0;
+  // With hand-written rules, singular "sweet"/"crisp" are adjectives ("sweet pickle", "crisp & crunchy little gem"), not sweets/crisps
+  const junkName = cat.match ? n.replace(/\b(sweet|crisp)\b/g, "") : n;
+  if (JUNK.test(junkName) && !JUNK.test(about)) return 0;
   const needFree = (p.mustBe || []).some(m => (m === "gluten-free" && (cat.allergens || []).includes("gluten")) || (m === "dairy-free" && (cat.allergens || []).includes("dairy")));
   if (cat.match) {
     // Hand-written rules in the catalogue: every "all" regex, at least one "any", no "none" must match the product name.

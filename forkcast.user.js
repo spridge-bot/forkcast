@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Forkcast Helper
 // @namespace    forkcast.spridge
-// @version      1.0.1792328130
+// @version      1.0.1792329646
 // @description  One-click trolley filling for Forkcast and Plates: fills your supermarket trolley in your own browser.
 // @match        https://ocado.com/*
 // @match        https://*.ocado.com/*
@@ -37,7 +37,7 @@
 // ==/UserScript==
 (() => {
   "use strict";
-  const VERSION = "1.0.1792328130";
+  const VERSION = "1.0.1792329646";
   const here = location.hostname;
   // on Forkcast / Plates: just say the helper is installed, so they offer the one-click button
   if (["100.122.51.100","192.168.1.178","localhost","127.0.0.1","spridge-bot.github.io"].includes(here)) { document.documentElement.dataset.fcHelper = VERSION; return; }
@@ -617,6 +617,9 @@
   ];
   const mine = FILLS.filter(f => here === f.host || here.endsWith("." + f.host));
   if (!mine.length) return;
+  // some shops' sites break on a # link, so Forkcast sends ?forkcast= there; move it to the # for the fill
+  (function () { const m = /[?&](forkcast|plates)=([^&]*)/.exec(location.search);
+    if (m && !new RegExp("[#&]" + m[1] + "=").test(location.hash)) history.replaceState(null, "", location.pathname + (location.search.replace(m[0], "").replace(/^&/, "?") || "") + "#" + m[1] + "=" + m[2]); })();
   const KEY = "forkcast-helper-pending", now = Date.now();
   let pending = null; try { pending = JSON.parse(localStorage.getItem(KEY) || "null"); } catch (e) {}
   if (pending && now - pending.t > 30 * 60e3) pending = null;
