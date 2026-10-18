@@ -293,8 +293,46 @@ function shop() {
     + `<div class="row wrap" style="gap:12px"><label class="row">Choose products <select onchange="setA('style',this.value);startCompare()">${Object.entries(C.styles).map(([k, l]) => `<option value="${k}" ${p.style === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
       <label class="row"><input type="checkbox" ${p.loyalty ? "checked" : ""} onchange="setA('loyalty',this.checked);startCompare()"> Loyalty card prices</label>${p.budget ? `<span class="small dim">Budget <b class="num" style="color:var(--ink-1)">${money(p.budget)}</b></span>` : ""}</div>`
     + `<div class="shops">${rows}</div>`
+    + (ranked.length > 1 ? heatmap(ranked, V) : "")
     + `<p class="small dim">Totals count whole packs. Items a shop doesn't stock are estimated from the other shops so the comparison is fair.</p>`
     + nextBar(S.pick ? `Ordering from <b>${esc(J.retailers[S.pick]?.name || "")}</b>` : "Pick a shop above", "Recipes", "go(3)");
+}
+// Price heatmap: shops down the side (in ranked order), list items across, each cell what that item
+// costs at that shop (whole packs). Shading is per item, cheapest to dearest, in one hue, so you can
+// see where the money goes; the items with the widest spread come first. Hover or tap for details.
+function heatmap(ranked, V) {
+  const items = (S.list || []).filter(l => !l.skip);
+  const cols = items.map(it => {
+    const cells = ranked.map(r => V[r.id].lines.find(l => l.item === it.item)).map(l => l && !l.missing ? l : null);
+    const vals = cells.filter(Boolean).map(l => l.cost);
+    const lo = Math.min(...vals), hi = Math.max(...vals);
+    return { it, cells, lo, hi, spread: vals.length > 1 ? hi - lo : 0 };
+  }).filter(c => c.cells.some(Boolean)).sort((a, b) => b.spread - a.spread);
+  const shade = (v, c) => c.hi > c.lo ? (v - c.lo) / (c.hi - c.lo) : 0;
+  const cell = (l, c, r) => {
+    if (!l) return `<td class="hm-x" title="${esc(r.name)}: not stocked">–</td>`;
+    const t = shade(l.cost, c), pct = Math.round(8 + t * 72);
+    const tip = `${r.name}: ${l.packs} × ${l.product.name}${l.product.size ? " (" + l.product.size + ")" : ""} = ${money(l.cost)}`;
+    return `<td class="hm-c ${t > .6 ? "dark" : ""} ${l.cost === c.lo ? "low" : ""}" style="--p:${pct}%" tabindex="0" data-tip="${esc(tip)}">${l.cost < 10 ? l.cost.toFixed(2) : Math.round(l.cost)}</td>`;
+  };
+  const table = `<div class="hm-wrap" role="region" aria-label="Price of each item at each supermarket" tabindex="0"><table class="hm">
+    <thead><tr><th scope="col" class="hm-shop">Shop</th>${cols.map(c => `<th scope="col"><span>${esc(c.it.name)}</span></th>`).join("")}</tr></thead>
+    <tbody>${ranked.map((r, i) => `<tr><th scope="row" class="hm-shop">${esc(r.name)}</th>${cols.map(c => cell(c.cells[i], c, r)).join("")}</tr>`).join("")}</tbody></table></div>`;
+  return panel("Price heatmap", `${cols.length} items × ${ranked.length} shops`,
+    `<p class="help">Each column is one item on your list, priced for the packs you'd buy. Darker means dearer than the other shops for that item; underlined is the cheapest. Biggest price gaps on the left.</p>
+     <div class="hm-legend"><span>cheapest</span><i></i><span>dearest</span><span class="hm-x-key">– not stocked</span></div>${table}<div class="hm-tip" id="hm-tip" role="status"></div>`);
+}
+// tooltip for the heatmap (hover on a computer, tap on a phone)
+document.addEventListener("mouseover", e => hmTip(e.target.closest?.(".hm-c")));
+document.addEventListener("focusin", e => hmTip(e.target.closest?.(".hm-c")));
+document.addEventListener("click", e => hmTip(e.target.closest?.(".hm-c")));
+function hmTip(td) {
+  const tip = document.getElementById("hm-tip"); if (!tip) return;
+  if (!td) { tip.classList.remove("on"); return; }
+  tip.textContent = td.dataset.tip; tip.classList.add("on");
+  const r = td.getBoundingClientRect(), w = tip.offsetWidth;
+  tip.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2)) + "px";
+  tip.style.top = (r.top + scrollY - tip.offsetHeight - 8) + "px";
 }
 function shopLink(r, buy) {
   const list = buy.map(l => `${encodeURIComponent(l.product.id)}:${l.packs}`).join(",");
@@ -310,8 +348,8 @@ function orderPanel(r, v) {
   else if (HELPER) h += `<div class="stepline"><span class="n">1</span><div class="b"><a class="btn go big" target="_blank" rel="noopener" href="${esc(link)}">Fill my ${esc(r.name)} basket ↗</a><p class="small dim">Opens ${esc(r.name)} and fills the basket. Log in when it asks, then check out.</p></div></div>`;
   else {
     h += `<div class="stepline"><span class="n">1</span><div class="b"><a class="btn go" target="_blank" rel="noopener" href="${esc(link)}">Open ${esc(r.name)} ↗</a><p class="small dim">Opens in a new tab with your list attached.</p></div></div>
-      <div class="stepline"><span class="n">2</span><div class="b"><b>On ${esc(r.name)}, tap the ★ Forkcast button in your bookmarks.</b> It fills the basket${/sign-in/.test(r.fillStatus) ? `; if ${esc(r.name)} asks you to log in first, log in and tap it again` : ""}.
-        <p class="small" style="margin-top:6px"><button class="link" onclick="OPEN=OPEN==='bm'?null:'bm';render()">${OPEN === "bm" ? "Hide" : "First time? Add the ★ Forkcast button to your browser (30 seconds, once)"}</button></p>${OPEN === "bm" ? bookmarkHelp() : ""}</div></div>
+      <div class="stepline"><span class="n">2</span><div class="b"><b>On ${esc(r.name)}, tap ★ Forkcast</b> (your bookmark, or Share › Forkcast on iPhone). It fills the basket${/sign-in/.test(r.fillStatus) ? `; if ${esc(r.name)} asks you to log in first, log in and tap it again` : ""}.
+        <p class="small" style="margin-top:6px"><button class="link" onclick="OPEN=OPEN==='bm'?null:'bm';render()">${OPEN === "bm" ? "Hide" : "First time? Set up ★ Forkcast on this device (once)"}</button></p>${OPEN === "bm" ? bookmarkHelp() : ""}</div></div>
       <div class="stepline"><span class="n">3</span><div class="b">Log in to ${esc(r.name)} if you haven't, book a slot and check out.</div></div>`;
     if (/unverified/.test(r.fillStatus)) h += `<p class="notice">Filling a ${esc(r.name)} basket is new and only partly tested. If anything's missing, the full list is below.</p>`;
   }
@@ -320,11 +358,23 @@ function orderPanel(r, v) {
 }
 // The bookmark is the one thing every browser has built in that can act on a supermarket's own page.
 function bookmarkHelp() {
-  if (BOOKMARK === null) { BOOKMARK = ""; fetch(STATIC ? "bookmarklet.js" : "/api/bookmarklet").then(r => r.text()).then(t => { BOOKMARK = "javascript:" + encodeURIComponent(t); render(); }); }
-  return `<div class="notice" style="border-color:var(--tom)"><p style="margin:0 0 8px"><b>On a computer:</b> drag this button onto your bookmarks bar: <a class="btn go tiny" href="${BOOKMARK || "#"}" onclick="alert('Drag this onto your bookmarks bar. Then, on the supermarket site, click it.');return false">★ Forkcast</a></p>
-    <p style="margin:0"><b>On iPhone or iPad:</b> <button class="tiny" onclick="navigator.clipboard?.writeText(BOOKMARK).then(()=>alert('Copied. In Safari: bookmark this page, name it ★ Forkcast, then edit the bookmark and paste this as its address.'))">Copy the button</button>, then in Safari bookmark any page, name it <b>★ Forkcast</b>, edit it and paste as the address. On the supermarket site, type "Forkcast" in the address bar and tap it.</p>
-    <p class="small dim" style="margin:8px 0 0">Why a bookmark? For your safety, browsers never let one website change another website's basket. A bookmark you add yourself runs on the supermarket's own page, so it can.</p></div>`;
+  if (BOOKMARK === null) { BOOKMARK = ""; fetch(STATIC ? "bookmark-loader.js" : "/api/bookmark-loader").then(r => r.text()).then(t => { BOOKMARK = "javascript:" + encodeURIComponent(t); LOADER = t; render(); }); }
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1), android = /Android/.test(navigator.userAgent);
+  const computer = `<p style="margin:0 0 8px"><b>On a computer:</b> drag this button onto your bookmarks bar: <a class="btn go tiny" href="${BOOKMARK || "#"}" onclick="alert('Drag this onto your bookmarks bar. Then, on the supermarket site, click it.');return false">★ Forkcast</a></p>`;
+  const iphone = `<p style="margin:0 0 8px"><b>On iPhone or iPad</b> (once, about a minute) add Forkcast to Safari's Share menu:</p>
+    <ol class="small" style="margin:0 0 8px;padding-left:18px"><li><button class="tiny" onclick="copyShortcut()">Copy the Forkcast code</button></li>
+    <li>Open the <b>Shortcuts</b> app › <b>+</b> › search for <b>Run JavaScript on Web Page</b> and add it.</li>
+    <li>Tap the code box in that action, select all, and paste.</li>
+    <li>Tap the <b>ⓘ</b> (or the name at the top) › turn on <b>Show in Share Sheet</b>, and name it <b>Forkcast</b>.</li></ol>
+    <p style="margin:0 0 8px">Then on the supermarket's site: tap <b>Share</b> › <b>Forkcast</b>.</p>`;
+  const droid = `<p style="margin:0 0 8px"><b>On Android (Chrome):</b> <button class="tiny" onclick="navigator.clipboard?.writeText(BOOKMARK).then(()=>alert('Copied. Bookmark this page (⋮ › ☆), then edit the bookmark: name it Forkcast and paste this as its URL.'))">Copy the button</button>, bookmark this page, then edit the bookmark: name it <b>Forkcast</b> and paste as the URL. On the supermarket's site, tap the address bar, type <b>Forkcast</b> and tap the bookmark.</p>`;
+  return `<div class="notice" style="border-color:var(--tom)">${ios ? iphone : android ? droid : computer}
+    <details class="small" style="margin-top:6px"><summary style="cursor:pointer;color:var(--ink-3)">Other devices</summary><div style="margin-top:8px">${[ios ? "" : iphone, android ? "" : droid, ios || android ? computer : ""].join("")}</div></details>
+    <p class="small dim" style="margin:8px 0 0">Why? For your safety, browsers never let one website change another website's basket. A button you add yourself runs on the supermarket's own page, so it can. It always fetches the latest version, so you only set it up once.</p></div>`;
 }
+let LOADER = "";
+// Shortcuts' "Run JavaScript on Web Page" needs completion() at the end
+function copyShortcut() { navigator.clipboard?.writeText(LOADER + "\ncompletion(true);").then(() => alert("Copied. Now open the Shortcuts app and follow steps 2–4."), () => alert("Couldn't copy here; try again.")); }
 const short = s => s.length > 30 ? s.slice(0, 28) + "…" : s;
 function swapLine(shop, item, k) { const m = { ...(S.swaps[shop] || {}) }; k == null ? delete m[item] : m[item] = k; S.swaps[shop] = m; save(); render(); }
 let HELPER = !!document.documentElement.dataset.fcHelper;

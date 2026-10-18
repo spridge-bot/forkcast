@@ -223,3 +223,31 @@ details.fold>.in{padding:0 20px 20px}
 .meal{gap:2px}
 button.link{white-space:normal;text-align:left}
 @media (max-width:480px){.day{grid-template-columns:44px 1fr;gap:8px}.day .d{font-size:16px}}
+
+/* price heatmap: one hue, per item, cheapest → dearest; scrolls sideways inside its panel */
+.hm-wrap{overflow-x:auto;margin:10px -20px 0;padding:0 20px 6px;scrollbar-width:thin}
+.hm{border-collapse:separate;border-spacing:2px;font-size:12px}
+.hm th{font-weight:500;color:var(--ink-3);text-align:left}
+.hm thead th{height:118px;vertical-align:bottom;padding:0 0 6px;min-width:44px;max-width:44px}
+.hm thead th span{display:block;transform:rotate(-55deg);transform-origin:left bottom;width:150px;margin-left:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px}
+.hm .hm-shop{position:sticky;left:0;z-index:2;background:var(--deck);padding-right:10px;color:var(--ink-1);font-weight:600;white-space:nowrap;min-width:92px}
+.hm thead .hm-shop{color:var(--ink-3);font-weight:500}
+.hm-c{min-width:44px;height:32px;text-align:center;border-radius:4px;background:color-mix(in oklab,var(--tom) var(--p),var(--deck));color:var(--ink-1);cursor:default;font-variant-numeric:tabular-nums}
+.hm-c.dark{color:var(--on-tom);font-weight:600}
+.hm-c.low{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:3px;font-weight:600}
+.hm-c:focus-visible{outline:2px solid var(--ink-1);outline-offset:1px}
+.hm-x{text-align:center;color:var(--ink-4);background:repeating-linear-gradient(135deg,transparent 0 4px,var(--line) 4px 5px);border-radius:4px}
+.hm-legend{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-3)}
+.hm-legend i{width:120px;height:10px;border-radius:3px;background:linear-gradient(90deg,color-mix(in oklab,var(--tom) 8%,var(--deck)),color-mix(in oklab,var(--tom) 80%,var(--deck)))}
+.hm-x-key{margin-left:10px}
+.hm-tip{position:absolute;z-index:40;max-width:280px;padding:8px 10px;border-radius:8px;background:var(--ink-1);color:var(--navy);font-size:12px;line-height:1.4;pointer-events:none;opacity:0;transition:opacity .12s}
+.hm-tip.on{opacity:1}
+
+/* the logo beside the wordmark: tomato tines rising like a chart, an ink handle */
+.mark{flex-direction:row;align-items:center;gap:9px}
+.mark::after{display:none}
+.mark .word{display:inline-flex;flex-direction:column;gap:4px}
+.mark .word::after{content:"";height:2px;background:var(--tom);border-radius:2px}
+.logo{width:24px;height:28px;flex:none}
+.logo .tine{fill:var(--tom)} .logo .handle{fill:var(--ink-1)}
+.mark:hover .logo .tine{fill:var(--tom-deep)}

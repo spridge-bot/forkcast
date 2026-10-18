@@ -159,6 +159,8 @@ function parseSize(size, name, want) {
   if (m) return { qty: +m[1] * 568, unit: "ml", count: 1 };
   m = t.match(/(?:pack of|x)\s*(\d+)\b|\b(\d+)\s*(?:pack|pk|per pack|eggs|bulbs|limes|lemons|peppers|onions|avocados|ct)\b/);
   if (m) return { qty: +(m[1] || m[2]), unit: "each", count: +(m[1] || m[2]) };
+  m = String(size || "").trim().match(/^(\d+)\s*s$/i);                            // Waitrose eggs: "12s"
+  if (m) return { qty: +m[1], unit: "each", count: +m[1] };
   m = String(size || "").trim().match(/^(\d+(?:\.\d+)?)$/);                       // bare number: the site's unit is the ingredient's
   if (m) return { qty: +m[1], unit: want === "each" ? "each" : want, count: 1 };
   if (/\beach\b|\bloose\b|\bsingle\b/.test(t)) return { qty: 1, unit: "each", count: 1 };
@@ -170,6 +172,8 @@ function conv(v, u) { return u === "kg" || u === "l" || u === "ltr" || u === "li
 function packYield(prod, ing, cat = {}) {
   const each = cat.eachWeight || eachGrams(ing.item);
   const s = parseSize(prod.size, prod.name, ing.unit); if (!s) return ing.unit === "each" ? 1 : null;
+  // spring onions, chillies, stock cubes: the shop's "each" is a bunch or box of several
+  if (ing.unit === "each" && s.unit === "each" && s.count === 1 && !/\d/.test(prod.size || "") && (cat.typicalPack || 1) > 1 && (cat.eachWeight || 999) < 40) return cat.typicalPack;
   if (s.unit === ing.unit) return s.qty;
   if (ing.unit === "each" && s.unit === "g") return Math.max(1, Math.round(s.qty / each));
   if (ing.unit === "g" && s.unit === "each") return s.qty * each;
