@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Call Quality Test</title>
+<style>
+/* A two-way HD call, simulated in the browser: your camera and microphone are encoded the way a
+   video-call app would (H.264, Webex-like bitrates), sent across a real WebRTC connection and
+   decoded again, so you see and hear what the other side would get, with live quality numbers. */
+:root{--bg:#07101f;--panel:#0b1629;--line:rgb(255 255 255/.09);--ink:#f4f6fa;--ink2:#c6ccd8;--ink3:#8b95a8;
+  --accent:#2f7bff;--ok:#3ddc84;--warn:#f5c518;--bad:#ff5a4f;--r:14px}
+@media (prefers-color-scheme:light){:root{--bg:#f4f2ee;--panel:#fff;--line:rgb(10 20 40/.1);--ink:#0b1629;--ink2:#2f3a4f;--ink3:#5a6478;--ok:#13824a;--warn:#8a6400;--bad:#c8261c}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+main{max-width:1200px;margin:0 auto;padding:24px 16px 60px}
+h1{font:700 clamp(32px,5vw,52px)/1 "DIN Condensed","Barlow Condensed","Arial Narrow",sans-serif;text-transform:uppercase;margin:8px 0}
+h1 em{font:italic 400 .6em Georgia,serif;color:var(--accent);text-transform:none;margin-left:.2em}
+p{margin:6px 0;color:var(--ink2)}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+select,button{font:600 15px/1 inherit;min-height:44px;padding:0 16px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+select{border-radius:8px;font-weight:500}
+button.go{background:var(--accent);border-color:transparent;color:#fff}
+button:disabled{opacity:.5}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin:14px 0}
+.vids{display:grid;gap:14px;grid-template-columns:1fr}
+@media(min-width:860px){.vids{grid-template-columns:1fr 1fr}}
+.vid{position:relative;background:#000;border-radius:12px;overflow:hidden;aspect-ratio:16/9}
+.vid video{width:100%;height:100%;object-fit:contain;display:block}
+.vid .lab{position:absolute;left:10px;top:10px;padding:4px 10px;border-radius:999px;background:rgb(0 0 0/.6);color:#fff;font-size:13px}
+.stats{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+.st{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.st .k{display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+.st .v{display:block;font:700 22px/1.2 "DIN Condensed","Barlow Condensed","Arial Narrow",sans-serif;margin-top:4px;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.meter{height:10px;border-radius:5px;background:var(--bg);border:1px solid var(--line);overflow:hidden}.meter i{display:block;height:100%;width:0;background:var(--ok);transition:width .1s}
+.verdict{font-size:17px}
+small,.small{font-size:13px;color:var(--ink3)}
+a{color:var(--accent)}
+</style>
+</head>
+<body>
+<main>
+  <p class="small">CALL QUALITY TEST</p>
+  <h1>How do you<em>look and sound?</em></h1>
+  <p>Simulates an HD video call: your camera and microphone are encoded like a Webex call (H.264 video, Opus audio), sent over a real WebRTC connection and decoded again. The right-hand picture is what the person you're calling would see. Nothing is recorded or uploaded.</p>
+
+  <div class="panel">
+    <div class="row">
+      <label>Camera <select id="cam"></select></label>
+      <label>Microphone <select id="mic"></select></label>
+      <label>Quality <select id="q">
+        <option value="720">HD 720p (Webex HD, ~2.5 Mbps)</option>
+        <option value="1080">Full HD 1080p (~4 Mbps)</option>
+        <option value="360">Standard 360p (~0.6 Mbps)</option>
+      </select></label>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="go" id="start">Start test call</button>
+      <button id="stop" disabled>End call</button>
+      <button id="hear" disabled title="Records 8 seconds of what they'd hear, then plays it back, so there's no echo">Record 8 s and play back what they'd hear</button>
+      <a href="https://www.webex.com/test-meeting.html" target="_blank" rel="noopener">Then try Webex's own test meeting ↗</a>
+    </div>
+    <p class="small" id="status" style="margin-top:10px">Allow camera and microphone when asked. Use headphones if you want to listen live.</p>
+  </div>
+
+  <div class="vids">
+    <div class="vid"><video id="local" autoplay playsinline muted></video><span class="lab">You (camera, before sending)</span></div>
+    <div class="vid"><video id="remote" autoplay playsinline muted></video><span class="lab">What they'd see (after encoding)</span></div>
+  </div>
+
+  <div class="panel">
+    <div class="row" style="justify-content:space-between"><b>Microphone level</b><span class="small" id="micl">–</span></div>
+    <div class="meter" style="margin-top:8px"><i id="mlev"></i></div>
+    <p class="small" style="margin-top:6px">Speak normally: the bar should reach about halfway. If it barely moves, the mic is too far away or the wrong one is selected.</p>
+  </div>
+
+  <div class="panel">
+    <b>Live quality</b>
+    <div class="stats" style="margin-top:12px">
+      <div class="st"><span class="k">Picture sent</span><span class="v" id="s-res">–</span></div>
+      <div class="st"><span class="k">Frames / second</span><span class="v" id="s-fps">–</span></div>
+      <div class="st"><span class="k">Video bitrate</span><span class="v" id="s-vbr">–</span></div>
+      <div class="st"><span class="k">Audio bitrate</span><span class="v" id="s-abr">–</span></div>
+      <div class="st"><span class="k">Codec</span><span class="v" id="s-codec">–</span></div>
+      <div class="st"><span class="k">Held back by</span><span class="v" id="s-lim">–</span></div>
+      <div class="st"><span class="k">Frames dropped</span><span class="v" id="s-drop">–</span></div>
+      <div class="st"><span class="k">Packets lost</span><span class="v" id="s-loss">–</span></div>
+    </div>
+    <p class="verdict" id="verdict" style="margin-top:14px"></p>
+  </div>
+
+  <div class="panel small">
+    <b>What this tests, and what it doesn't.</b> This checks your camera, microphone, lighting and how well this computer encodes HD video (for example whether the processor keeps up), which is what decides how you look and sound. The call runs inside this computer, so it doesn't test the trip across the internet. For that, run Webex's official test meeting (link above) while netwatch watches the line. Webex in Citrix runs the camera through the Webex VDI plugin on the iMac, so test on the iMac itself.
+  </div>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const Q = { "360": { w: 640, h: 360, br: 600e3 }, "720": { w: 1280, h: 720, br: 2.5e6 }, "1080": { w: 1920, h: 1080, br: 4e6 } };
+let stream, pc1, pc2, timer, prev = {}, audioCtx, recvStream;
+
+async function listDevices() {
+  const ds = await navigator.mediaDevices.enumerateDevices();
+  const fill = (sel, kind) => { const cur = sel.value; sel.innerHTML = ds.filter(d => d.kind === kind).map((d, i) => `<option value="${d.deviceId}">${d.label || kind + " " + (i + 1)}</option>`).join(""); if (cur) sel.value = cur; };
+  fill($("#cam"), "videoinput"); fill($("#mic"), "audioinput");
+}
+function status(t) { $("#status").textContent = t; }
+
+async function start() {
+  const q = Q[$("#q").value];
+  status("Starting camera and microphone…");
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { deviceId: $("#cam").value ? { exact: $("#cam").value } : undefined, width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: 30 } },
+    audio: { deviceId: $("#mic").value ? { exact: $("#mic").value } : undefined, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  });
+  await listDevices();
+  $("#local").srcObject = stream;
+  micMeter(stream);
+  // the call: two ends of a real WebRTC connection, as a calling app would set up
+  pc1 = new RTCPeerConnection(); pc2 = new RTCPeerConnection();
+  pc1.onicecandidate = e => e.candidate && pc2.addIceCandidate(e.candidate);
+  pc2.onicecandidate = e => e.candidate && pc1.addIceCandidate(e.candidate);
+  recvStream = new MediaStream();
+  pc2.ontrack = e => { recvStream.addTrack(e.track); $("#remote").srcObject = recvStream; };
+  for (const t of stream.getTracks()) {
+    const tr = pc1.addTransceiver(t, { direction: "sendonly", streams: [stream] });
+    if (t.kind === "video") {
+      // prefer H.264 like Webex
+      const caps = RTCRtpSender.getCapabilities("video").codecs;
+      const h264 = caps.filter(c => /h264/i.test(c.mimeType)), rest = caps.filter(c => !/h264/i.test(c.mimeType));
+      if (h264.length && tr.setCodecPreferences) tr.setCodecPreferences([...h264, ...rest]);
+    }
+  }
+  const offer = await pc1.createOffer(); await pc1.setLocalDescription(offer); await pc2.setRemoteDescription(offer);
+  const answer = await pc2.createAnswer(); await pc2.setLocalDescription(answer); await pc1.setRemoteDescription(answer);
+  // Webex-like bitrates
+  for (const s of pc1.getSenders()) {
+    const p = s.getParameters(); if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+    p.encodings[0].maxBitrate = s.track.kind === "video" ? q.br : 64e3;
+    if (s.track.kind === "video") p.encodings[0].maxFramerate = 30;
+    await s.setParameters(p).catch(() => {});
+  }
+  $("#start").disabled = true; $("#stop").disabled = false; $("#hear").disabled = false;
+  status("Call running. Wait about 10 seconds for the picture to reach full quality.");
+  prev = {}; timer = setInterval(stats, 1000);
+}
+
+function stop() {
+  clearInterval(timer);
+  [pc1, pc2].forEach(p => p && p.close());
+  stream && stream.getTracks().forEach(t => t.stop());
+  $("#start").disabled = false; $("#stop").disabled = true; $("#hear").disabled = true;
+  status("Call ended.");
+}
+
+function micMeter(s) {
+  audioCtx = audioCtx || new AudioContext();
+  const an = audioCtx.createAnalyser(); an.fftSize = 512;
+  audioCtx.createMediaStreamSource(s).connect(an);
+  const buf = new Float32Array(an.fftSize);
+  (function tick() {
+    an.getFloatTimeDomainData(buf);
+    let rms = 0; for (const x of buf) rms += x * x; rms = Math.sqrt(rms / buf.length);
+    const db = 20 * Math.log10(rms || 1e-6), pct = Math.max(0, Math.min(100, (db + 60) * 1.8));
+    $("#mlev").style.width = pct + "%"; $("#micl").textContent = (db > -90 ? db.toFixed(0) : "–") + " dB";
+    if (s.active) requestAnimationFrame(tick);
+  })();
+}
+
+async function hear() {
+  // record what the far end receives, then play it back: no echo, and you hear the encoded audio
+  const rec = new MediaRecorder(new MediaStream(recvStream.getAudioTracks().concat(recvStream.getVideoTracks())));
+  const chunks = []; rec.ondataavailable = e => chunks.push(e.data);
+  rec.onstop = () => { const v = document.createElement("video"); v.src = URL.createObjectURL(new Blob(chunks, { type: rec.mimeType }));
+    v.controls = true; v.style.cssText = "width:100%;border-radius:12px;margin-top:12px"; $("#hear").after(v); v.play(); status("Playing back what they'd have seen and heard."); };
+  rec.start(); status("Recording 8 seconds: talk normally…"); $("#hear").disabled = true;
+  setTimeout(() => { rec.stop(); $("#hear").disabled = false; }, 8000);
+}
+
+async function stats() {
+  const r = await pc1.getStats(); let out = {}, codecs = {};
+  r.forEach(s => { if (s.type === "codec") codecs[s.id] = s.mimeType; });
+  r.forEach(s => {
+    if (s.type === "outbound-rtp" && s.kind === "video") out.v = s;
+    if (s.type === "outbound-rtp" && s.kind === "audio") out.a = s;
+    if (s.type === "remote-inbound-rtp" && s.kind === "video") out.rv = s;
+  });
+  const r2 = await pc2.getStats(); r2.forEach(s => { if (s.type === "inbound-rtp" && s.kind === "video") out.iv = s; });
+  const now = performance.now(), dt = prev.t ? (now - prev.t) / 1000 : 1;
+  const kbps = (cur, p) => cur && p ? ((cur.bytesSent - p.bytesSent) * 8 / dt / 1000) : 0;
+  const vbr = kbps(out.v, prev.v), abr = kbps(out.a, prev.a);
+  const v = out.v || {}, iv = out.iv || {};
+  const res = v.frameWidth ? `${v.frameWidth}×${v.frameHeight}` : "–";
+  const fps = Math.round(v.framesPerSecond || 0);
+  const lim = v.qualityLimitationReason || "none";
+  const target = Q[$("#q").value];
+  set("#s-res", res, v.frameHeight >= target.h * .95 ? "ok" : v.frameHeight >= target.h * .6 ? "warn" : "bad");
+  set("#s-fps", fps || "–", fps >= 27 ? "ok" : fps >= 20 ? "warn" : "bad");
+  set("#s-vbr", vbr ? (vbr / 1000).toFixed(2) + " Mbps" : "–", vbr >= target.br / 1000 * .7 ? "ok" : vbr ? "warn" : "");
+  set("#s-abr", abr ? Math.round(abr) + " kbps" : "–", abr >= 20 ? "ok" : "warn");
+  set("#s-codec", (codecs[v.codecId] || "–").replace("video/", ""), "");
+  set("#s-lim", { none: "nothing", cpu: "processor", bandwidth: "bandwidth", other: "other" }[lim] || lim, lim === "none" ? "ok" : "warn");
+  set("#s-drop", iv.framesDropped ?? "–", (iv.framesDropped || 0) < 10 ? "ok" : "warn");
+  set("#s-loss", out.rv ? out.rv.packetsLost : 0, (out.rv?.packetsLost || 0) === 0 ? "ok" : "warn");
+  const issues = [];
+  if (v.frameHeight && v.frameHeight < target.h * .95) issues.push(`your camera or computer is only producing ${res}, below the ${target.h}p asked for`);
+  if (fps && fps < 25) issues.push(`the picture is running at ${fps} frames a second (aim for 30): usually poor lighting, or the camera on a low-light setting`);
+  if (lim === "cpu") issues.push("the processor can't keep up with HD encoding: close other apps, or use 720p");
+  if (lim === "bandwidth") issues.push("the encoder is holding back to stay within the bitrate");
+  $("#verdict").innerHTML = !v.frameWidth ? "Warming up…" : issues.length ? "<span class='warn'>Things to look at:</span> " + issues.join("; ") + "." :
+    `<span class='ok'>Looks good.</span> You're sending ${res} at ${fps} fps and ${(vbr / 1000).toFixed(1)} Mbps, which is Webex HD quality. Use "Record 8 s" to check how your voice sounds.`;
+  prev = { t: now, v: out.v, a: out.a };
+}
+function set(sel, txt, cls) { const e = $(sel); e.textContent = txt; e.className = "v " + (cls || ""); }
+
+$("#start").onclick = () => start().catch(e => status("Couldn't start: " + e.message + ". Check the browser has permission to use the camera and microphone."));
+$("#stop").onclick = stop;
+$("#hear").onclick = hear;
+navigator.mediaDevices?.enumerateDevices && listDevices();
+navigator.mediaDevices?.addEventListener?.("devicechange", listDevices);
+</script>
+</body>
+</html>
